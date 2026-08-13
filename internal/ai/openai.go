@@ -46,6 +46,11 @@ const (
 	// The API rejects an empty/whitespace-only string in the input array with a 400 that fails the
 	// whole batch; a lone space is a harmless stand-in that keeps input/output indices aligned.
 	emptyEmbeddingPlaceholder = " "
+
+	// Correlation headers sent to the provider on conversation-scoped completion requests, so
+	// OpenAI-compatible gateways can attribute a request to the conversation it belongs to.
+	hdrConversationUUID = "X-Libredesk-Conversation-UUID"
+	hdrInboxID          = "X-Libredesk-Inbox-ID"
 )
 
 // Endpoints (baseURL+model) that rejected max_tokens and require max_completion_tokens.
@@ -151,7 +156,15 @@ func (o *OpenAIClient) SendChatCompletion(ctx context.Context, payload models.Ch
 		body["tool_choice"] = "auto"
 	}
 
-	respBytes, err := o.post(ctx, "/chat/completions", body)
+	var headers map[string]string
+	if payload.ConversationUUID != "" {
+		headers = map[string]string{hdrConversationUUID: payload.ConversationUUID}
+		if payload.InboxID > 0 {
+			headers[hdrInboxID] = strconv.Itoa(payload.InboxID)
+		}
+	}
+
+	respBytes, err := o.post(ctx, "/chat/completions", body, headers)
 	if err != nil {
 		return models.ChatCompletionResult{}, err
 	}
@@ -238,7 +251,7 @@ func (o *OpenAIClient) embedBatch(ctx context.Context, model string, inputs []st
 		body["dimensions"] = o.cfg.Dimensions
 	}
 
-	respBytes, err := o.post(ctx, "/embeddings", body)
+	respBytes, err := o.post(ctx, "/embeddings", body, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +300,7 @@ func stripImages(msgs []models.ChatMessage) []models.ChatMessage {
 	return out
 }
 
-func (o *OpenAIClient) post(ctx context.Context, path string, body map[string]any) ([]byte, error) {
+func (o *OpenAIClient) post(ctx context.Context, path string, body map[string]any, headers map[string]string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, overallRequestTimeout)
 	defer cancel()
 
@@ -298,7 +311,7 @@ func (o *OpenAIClient) post(ctx context.Context, path string, body map[string]an
 
 	adaptations := 0
 	for attempt := 0; ; attempt++ {
-		respBytes, retryAfter, retryable, err := o.doRequest(ctx, path, bodyBytes)
+		respBytes, retryAfter, retryable, err := o.doRequest(ctx, path, bodyBytes, headers)
 		if err == nil {
 			return respBytes, nil
 		}
@@ -340,13 +353,16 @@ func (o *OpenAIClient) post(ctx context.Context, path string, body map[string]an
 }
 
 // doRequest sends one attempt; retryAfter/retryable tell the caller whether and when to retry.
-func (o *OpenAIClient) doRequest(ctx context.Context, path string, bodyBytes []byte) ([]byte, time.Duration, bool, error) {
+func (o *OpenAIClient) doRequest(ctx context.Context, path string, bodyBytes []byte, headers map[string]string) ([]byte, time.Duration, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.cfg.BaseURL+path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+o.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := o.client.Do(req)
 	if err != nil {

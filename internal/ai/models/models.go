@@ -223,6 +223,13 @@ type PromptPayload struct {
 type ChatCompletionPayload struct {
 	Messages []ChatMessage `json:"messages"`
 	Tools    []ToolDef     `json:"tools,omitempty"`
+	// ConversationUUID, when set, is sent to the provider as the
+	// X-Libredesk-Conversation-UUID request header so OpenAI-compatible gateways can
+	// correlate completion requests with the conversation they were made for. It is
+	// never part of the request body.
+	ConversationUUID string `json:"-"`
+	// InboxID, when non-zero, is likewise sent as the X-Libredesk-Inbox-ID header.
+	InboxID int `json:"-"`
 }
 
 // ChatCompletionResult is the parsed assistant turn: either text or tool calls.

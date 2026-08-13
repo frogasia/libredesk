@@ -57,7 +57,7 @@ func (m *Manager) RunAgentWithTools(ctx context.Context, systemPrompt string, hi
 
 	for step := 0; step < maxSteps; step++ {
 		m.lo.Debug("ai run step", "step", step, "messages", len(messages))
-		res, err := m.chatCompletion(ctx, client, models.ChatCompletionPayload{Messages: messages, Tools: defs})
+		res, err := m.chatCompletion(ctx, client, models.ChatCompletionPayload{Messages: messages, Tools: defs, ConversationUUID: tctx.ConversationUUID, InboxID: tctx.InboxID})
 		if err != nil {
 			return "", err
 		}
@@ -86,7 +86,7 @@ func (m *Manager) RunAgentWithTools(ctx context.Context, systemPrompt string, hi
 	}
 
 	// Step budget exhausted, force a final answer by omitting tools.
-	res, err := m.chatCompletion(ctx, client, models.ChatCompletionPayload{Messages: messages})
+	res, err := m.chatCompletion(ctx, client, models.ChatCompletionPayload{Messages: messages, ConversationUUID: tctx.ConversationUUID, InboxID: tctx.InboxID})
 	if err != nil {
 		return "", err
 	}
