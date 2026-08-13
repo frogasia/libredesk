@@ -108,7 +108,6 @@ type conversationResponseWithBusinessHours struct {
 
 // handleGetChatLauncherSettings returns the live chat launcher settings for the widget.
 func handleGetChatLauncherSettings(r *fastglue.Request) error {
-	r.RequestCtx.Response.Header.Set("Access-Control-Allow-Origin", "*")
 	config, err := getWidgetConfig(r)
 	if err != nil {
 		return sendErrorEnvelope(r, envelope.NewError(envelope.GeneralError, err.Error(), nil))

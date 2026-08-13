@@ -317,17 +317,19 @@ func initHandlers(g *fastglue.Fastglue, hub *ws.Hub) {
 	// Live chat widget websocket.
 	g.GET("/widget/ws", rateLimit(handleWidgetWS, "widget"))
 
-	// Widget APIs.
-	g.GET("/api/v1/widget/chat/settings/launcher", rateLimit(validateWidgetInbox(handleGetChatLauncherSettings), "widget"))
-	g.GET("/api/v1/widget/chat/settings", rateLimit(validateWidgetInbox(handleGetChatSettings), "widget"))
-	g.POST("/api/v1/widget/chat/auth/exchange", rateLimit(validateWidgetInbox(handleAuthExchange), "widget"))
-	g.GET("/api/v1/widget/chat/auth/me", rateLimit(widgetAuth(handleWidgetAuthMe), "widget"))
-	g.POST("/api/v1/widget/chat/conversations/init", rateLimit(widgetAuth(handleChatInit), "widget"))
-	g.GET("/api/v1/widget/chat/conversations", rateLimit(widgetAuth(handleGetConversations), "widget"))
-	g.POST("/api/v1/widget/chat/conversations/{uuid}/update-last-seen", rateLimit(widgetAuth(handleChatUpdateLastSeen), "widget"))
-	g.GET("/api/v1/widget/chat/conversations/{uuid}", rateLimit(widgetAuth(handleChatGetConversation), "widget"))
-	g.POST("/api/v1/widget/chat/conversations/{uuid}/message", rateLimit(widgetAuth(handleChatSendMessage), "widget"))
-	g.POST("/api/v1/widget/media/upload", rateLimit(widgetAuth(handleWidgetMediaUpload), "widget"))
+	// Widget APIs. widgetCORS wraps outermost so even rate-limited and error responses
+	// carry CORS headers a cross-origin embedder can read.
+	g.OPTIONS("/api/v1/widget/{all:*}", handleWidgetCORSPreflight)
+	g.GET("/api/v1/widget/chat/settings/launcher", widgetCORS(rateLimit(validateWidgetInbox(handleGetChatLauncherSettings), "widget")))
+	g.GET("/api/v1/widget/chat/settings", widgetCORS(rateLimit(validateWidgetInbox(handleGetChatSettings), "widget")))
+	g.POST("/api/v1/widget/chat/auth/exchange", widgetCORS(rateLimit(validateWidgetInbox(handleAuthExchange), "widget")))
+	g.GET("/api/v1/widget/chat/auth/me", widgetCORS(rateLimit(widgetAuth(handleWidgetAuthMe), "widget")))
+	g.POST("/api/v1/widget/chat/conversations/init", widgetCORS(rateLimit(widgetAuth(handleChatInit), "widget")))
+	g.GET("/api/v1/widget/chat/conversations", widgetCORS(rateLimit(widgetAuth(handleGetConversations), "widget")))
+	g.POST("/api/v1/widget/chat/conversations/{uuid}/update-last-seen", widgetCORS(rateLimit(widgetAuth(handleChatUpdateLastSeen), "widget")))
+	g.GET("/api/v1/widget/chat/conversations/{uuid}", widgetCORS(rateLimit(widgetAuth(handleChatGetConversation), "widget")))
+	g.POST("/api/v1/widget/chat/conversations/{uuid}/message", widgetCORS(rateLimit(widgetAuth(handleChatSendMessage), "widget")))
+	g.POST("/api/v1/widget/media/upload", widgetCORS(rateLimit(widgetAuth(handleWidgetMediaUpload), "widget")))
 
 	// Frontend pages.
 	g.GET("/", notAuthPage(serveIndexPage))

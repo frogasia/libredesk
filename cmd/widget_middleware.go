@@ -27,6 +27,44 @@ const (
 	hdrClearVisitorToken  = "X-Libredesk-Clear-Visitor"
 )
 
+// widgetCORSAllowHeaders lists the request headers the widget sends cross-origin.
+var widgetCORSAllowHeaders = strings.Join([]string{
+	"Authorization",
+	"Content-Type",
+	hdrWidgetInboxID,
+	hdrWidgetVisitorToken,
+}, ", ")
+
+// widgetCORS sets CORS headers on widget API responses so the live chat widget can call
+// them from any website it is embedded on. The widget authenticates with a bearer session
+// token (never cookies), so a wildcard origin exposes no ambient credentials; per-site
+// restrictions remain enforced server-side (trusted domains CSP, blocked IPs).
+func widgetCORS(next func(*fastglue.Request) error) func(*fastglue.Request) error {
+	return func(r *fastglue.Request) error {
+		setWidgetCORSHeaders(r)
+		return next(r)
+	}
+}
+
+// setWidgetCORSHeaders writes the CORS headers shared by widget responses and preflights.
+func setWidgetCORSHeaders(r *fastglue.Request) {
+	h := &r.RequestCtx.Response.Header
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+	h.Set("Access-Control-Allow-Headers", widgetCORSAllowHeaders)
+	h.Set("Access-Control-Expose-Headers", hdrClearVisitorToken)
+	h.Set("Access-Control-Max-Age", "86400")
+}
+
+// handleWidgetCORSPreflight answers OPTIONS preflight requests for widget endpoints. It does
+// no work (no auth, no DB), so it intentionally skips the rate limiter: a browser-issued
+// preflight must never be answered without CORS headers or the widget breaks opaquely.
+func handleWidgetCORSPreflight(r *fastglue.Request) error {
+	setWidgetCORSHeaders(r)
+	r.RequestCtx.SetStatusCode(fasthttp.StatusNoContent)
+	return nil
+}
+
 // validateWidgetInbox middleware validates the inbox from the request header or query param,
 // checks IP/domain restrictions, and sets inbox + config in context.
 func validateWidgetInbox(next func(*fastglue.Request) error) func(*fastglue.Request) error {
