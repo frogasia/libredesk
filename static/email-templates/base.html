@@ -134,7 +134,11 @@
 {{ define "footer" }}
     </div>
     <div class="footer">
-        <span>Powered by <a href="https://libredesk.io/" target="_blank">libredesk</a></span>
+        {{ if ne SiteName "" }}
+            <span>{{ SiteName }}</span>
+        {{ else }}
+            <span>Powered by <a href="https://libredesk.io/" target="_blank">libredesk</a></span>
+        {{ end }}
     </div>
     <div class="gutter">&nbsp;</div>
 </body>

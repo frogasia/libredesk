@@ -57,6 +57,12 @@ func handleUpdateGeneralSettings(r *fastglue.Request) error {
 	}
 	// Trim whitespace and trailing slash from root URL.
 	req.RootURL = strings.TrimRight(strings.TrimSpace(req.RootURL), "/")
+	// Same for the set-password URL base when provided (empty = default
+	// `{root_url}/set-password`; omitted = leave the stored value as is).
+	if req.SetPasswordURLBase != nil {
+		trimmed := strings.TrimRight(strings.TrimSpace(*req.SetPasswordURLBase), "/")
+		req.SetPasswordURLBase = &trimmed
+	}
 
 	// Get current language before update.
 	app.Lock()

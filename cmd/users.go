@@ -227,9 +227,16 @@ func handleCreateAgent(r *fastglue.Request) error {
 			app.lo.Error("error rendering template", "error", err)
 		}
 
+		// Subject follows the site identity, like the template body already
+		// does; the stock string stays the fallback for unbranded installs.
+		subject := app.i18n.T("globals.messages.welcomeToLibredesk")
+		if siteName := app.consts.Load().(*constants).SiteName; siteName != "" {
+			subject = "Welcome to " + siteName
+		}
+
 		if err := app.notifier.Send(notifier.Message{
 			RecipientEmails: []string{req.Email},
-			Subject:         app.i18n.T("globals.messages.welcomeToLibredesk"),
+			Subject:         subject,
 			Content:         content,
 			Provider:        notifier.ProviderEmail,
 		}); err != nil {

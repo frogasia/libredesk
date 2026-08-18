@@ -1,12 +1,17 @@
 package models
 
 type General struct {
-	SiteName                    string   `json:"app.site_name"`
-	Lang                        string   `json:"app.lang"`
-	MaxFileUploadSize           int      `json:"app.max_file_upload_size"`
-	FaviconURL                  string   `json:"app.favicon_url"`
-	LogoURL                     string   `json:"app.logo_url"`
-	RootURL                     string   `json:"app.root_url"`
+	SiteName          string `json:"app.site_name"`
+	Lang              string `json:"app.lang"`
+	MaxFileUploadSize int    `json:"app.max_file_upload_size"`
+	FaviconURL        string `json:"app.favicon_url"`
+	LogoURL           string `json:"app.logo_url"`
+	RootURL           string `json:"app.root_url"`
+	// Optional base URL for the password set/reset links in emails; empty
+	// means the default `{root_url}/set-password`. A pointer with omitempty
+	// so clients that don't know the field (e.g. the admin UI form) can't
+	// blank it: an omitted key is left untouched by the settings update.
+	SetPasswordURLBase          *string  `json:"app.set_password_url_base,omitempty"`
 	AllowedFileUploadExtensions []string `json:"app.allowed_file_upload_extensions"`
 	Timezone                    string   `json:"app.timezone"`
 	BusinessHoursID             string   `json:"app.business_hours_id"`

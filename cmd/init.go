@@ -78,6 +78,7 @@ type constants struct {
 	FaviconURL                  string
 	LogoURL                     string
 	SiteName                    string
+	SetPasswordURLBase          string
 	UploadProvider              string
 	AllowedUploadFileExtensions []string
 	MaxFileUploadSizeMB         int
@@ -157,6 +158,7 @@ func initConstants() *constants {
 		FaviconURL:                  ko.String("app.favicon_url"),
 		LogoURL:                     ko.String("app.logo_url"),
 		SiteName:                    ko.String("app.site_name"),
+		SetPasswordURLBase:          ko.String("app.set_password_url_base"),
 		UploadProvider:              ko.MustString("upload.provider"),
 		AllowedUploadFileExtensions: ko.Strings("app.allowed_file_upload_extensions"),
 		MaxFileUploadSizeMB:         ko.Int("app.max_file_upload_size"),
@@ -465,6 +467,17 @@ func getTmplFuncs(consts *constants, i18n *i18n.I18n) template.FuncMap {
 		},
 		"SiteName": func() string {
 			return consts.SiteName
+		},
+		// SetPasswordURL is the base URL of the page that consumes password
+		// set/reset tokens; the token is appended as `?token=`. Defaults to
+		// the app's own /set-password page, overridable with the
+		// `app.set_password_url_base` setting for deployments serving their
+		// own set-password UX.
+		"SetPasswordURL": func() string {
+			if consts.SetPasswordURLBase != "" {
+				return consts.SetPasswordURLBase
+			}
+			return consts.AppBaseURL + "/set-password"
 		},
 		"L": func() any {
 			return i18n

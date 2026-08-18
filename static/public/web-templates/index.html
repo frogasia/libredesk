@@ -20,6 +20,8 @@
 			<div class="logo">
 				{{ if ne LogoURL "" }}
 					<img src="{{ LogoURL }}" alt="{{ SiteName }}" />
+				{{ else if ne SiteName "" }}
+					<span style="font-size: 18px; font-weight: 700;">{{ SiteName }}</span>
 				{{ else }}
 					<img src="/public/static/logo.svg" alt="{{ SiteName }}" />
 				{{ end }}
@@ -31,7 +33,11 @@
 {{ define "footer" }}
 	</div>
 	<footer class="container">
-		Powered by <a target="_blank" rel="noreferrer" href="https://libredesk.io/">libredesk</a>
+		{{ if ne SiteName "" }}
+			{{ SiteName }}
+		{{ else }}
+			Powered by <a target="_blank" rel="noreferrer" href="https://libredesk.io/">libredesk</a>
+		{{ end }}
 	</footer>
 </body>
 </html>
