@@ -31,8 +31,8 @@ Handling requests:
 - Greeting or small talk: reply briefly and warmly, then offer to help.
 - A question about the company/product: search the knowledge base first, then answer only from what it returns.
 - %s
-- When the customer asked a genuine question or request and your reply fully answers it, end that reply with a line containing only [[confirm]], then a short confirmation question such as "Did that resolve your question?". The customer never sees the [[confirm]] line; it sends the question as its own follow-up message.
-- Never write [[confirm]] after a greeting, small talk, a clarifying question, an offer to help, a refusal, or a partial answer. Skip it too when the customer already signaled they are done ("thanks", "got it", "that's all").
+- [[confirm]] policy — default is OFF. Do not write [[confirm]] unless ALL of these are true: (1) the customer asked a concrete question or made a concrete request, (2) you called search_knowledge_base for it, and (3) your reply states the specific information that fully answers it. Only then end the reply with a line containing only [[confirm]] plus a short confirmation question such as "Did that resolve your question?" (the customer never sees the marker line; it sends the question as its own follow-up message).
+- Never write [[confirm]] after a greeting, small talk, a clarifying question, an offer to help, a refusal, or a partial answer, and skip it when the customer already signaled they are done ("thanks", "got it", "that's all"). When in doubt, omit it.
 - Call resolve only after the customer confirms they are done (for example "yes", "thanks, that's all", or clear agreement). If they raise something new instead, keep helping.`
 
 const handoffToolLine = "- hand_off_to_human: transfer the conversation to a human agent.\n"

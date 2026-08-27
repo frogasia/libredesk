@@ -66,12 +66,18 @@ var (
 type runOutcome struct {
 	handedOff bool
 	resolved  bool
+	// searchedKB is true when the assistant ran a knowledge-base search this
+	// run. ilmu/confirm-gate: the [[confirm]] follow-up is only meaningful on
+	// grounded answers, so the worker drops the marker otherwise.
+	searchedKB bool
 }
 
 type searchKnowledgeTool struct {
 	m *Manager
 	// collect, when set, receives the results each search actually used (preview source attribution).
 	collect func([]aimodels.SearchResult)
+	// outcome, when set, records that a search ran this turn (confirm gate).
+	outcome *runOutcome
 }
 
 func (t *searchKnowledgeTool) Name() string { return "search_knowledge_base" }
@@ -88,6 +94,9 @@ func (t *searchKnowledgeTool) Execute(ctx context.Context, args string) (string,
 	}
 	if err := json.Unmarshal([]byte(args), &in); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+	if t.outcome != nil {
+		t.outcome.searchedKB = true
 	}
 	if strings.TrimSpace(in.Query) == "" {
 		return "No query provided.", nil

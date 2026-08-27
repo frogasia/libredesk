@@ -288,7 +288,7 @@ func (m *Manager) handle(ctx context.Context, convID int) {
 
 	outcome := &runOutcome{}
 	tools := []ai.Tool{
-		&searchKnowledgeTool{m: m},
+		&searchKnowledgeTool{m: m, outcome: outcome},
 		&resolveTool{m: m, conv: conv, outcome: outcome},
 	}
 	if assistant.HandoffEnabled {
@@ -357,6 +357,14 @@ func (m *Manager) handle(ctx context.Context, convID int) {
 	}
 	// The model's text answer is the reply to the customer. Handoff and resolve are separate tool actions.
 	answer, confirm := splitConfirmation(strings.TrimSpace(answer))
+	// ilmu/confirm-gate: small models over-fire [[confirm]] (greetings,
+	// clarifying offers). The follow-up is only meaningful on an answer
+	// grounded in a knowledge-base search this run, so drop it otherwise
+	// (the reply itself is unaffected; resolve still works via its tool).
+	if confirm != "" && !outcome.searchedKB {
+		m.lo.Debug("ai agent dropping unearned [[confirm]] follow-up", "conversation_uuid", conv.UUID)
+		confirm = ""
+	}
 	// Email gets one message; separate chat-style bubbles only suit the widget.
 	if conv.InboxChannel == channelEmail && confirm != "" {
 		answer, confirm = answer+"\n\n"+confirm, ""
