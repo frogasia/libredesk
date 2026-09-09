@@ -266,12 +266,35 @@ func (m *Manager) handle(ctx context.Context, convID int) {
 		systemPrompt += "\n\n" + noContactIdentityNote
 	}
 	history := m.buildHistory(msgs, conv.ContactID)
+	// Set by the pre-turn knowledge search below; folded into the run outcome
+	// once it exists so the [[confirm]] gate treats the answer as grounded.
+	presearchedKB := false
 	// Keep customer-controlled data (contact fields, subject, attributes) out of the system prompt; it
 	// stays in a user-role block so it ranks below the assistant's instructions, not beside them.
 	if block := customerContextBlock(conv, contactLines); block != "" {
 		history = append([]aimodels.ChatMessage{{Role: aimodels.RoleUser, Content: block}}, history...)
 	}
-	m.lo.Debug("ai agent running", "conversation_uuid", conv.UUID, "history_messages", len(history), "turns", turns)
+	// ilmu/presearch-kb: run the knowledge-base search deterministically on
+	// the customer's latest message and inject the hits into that message
+	// BEFORE the first completion call, in the same <<result>> dialect the
+	// search tool uses. Small models otherwise skip the search tool for
+	// questions they judge out-of-scope by surface (e.g. an exact-title quick
+	// answer refused as "not support related"), leaving configured quick
+	// answers unreachable. Injecting into the user message (not a bare tool
+	// message) is provider-safe — OpenAI-compatible APIs reject tool-role
+	// entries without a matching tool_call_id — and the provider side parses
+	// these blocks from the last user message for citations. The search tool
+	// stays registered for the model's own follow-up queries within the run.
+	if lastIdx := lastCustomerMessageIndex(history); lastIdx >= 0 {
+		if results, err := m.ai.Search(ctx, history[lastIdx].Content, searchResultLimit); err != nil {
+			m.lo.Error("ai agent pre-turn knowledge search failed", "conversation_uuid", conv.UUID, "error", err)
+		} else if len(results) > 0 && results[0].Score >= minConfidence {
+			_, block := formatKnowledgeResults(results)
+			history[lastIdx].Content = history[lastIdx].Content + "\n\n" + block
+			presearchedKB = true
+		}
+	}
+	m.lo.Debug("ai agent running", "conversation_uuid", conv.UUID, "history_messages", len(history), "turns", turns, "presearched_kb", presearchedKB)
 
 	// A JWT livechat contact is trusted by login; everyone else (email channel, anonymous visitor)
 	// is trusted only within an OTP verification window. Read live so mid-turn verification counts.
@@ -286,7 +309,7 @@ func (m *Manager) handle(ctx context.Context, convID int) {
 	runVerified := verified()
 	m.lo.Debug("ai agent verification state", "conversation_uuid", conv.UUID, "channel", conv.InboxChannel, "contact_type", conv.Contact.Type, "has_email", conv.Contact.Email.String != "", "verified", runVerified)
 
-	outcome := &runOutcome{}
+	outcome := &runOutcome{searchedKB: presearchedKB}
 	tools := []ai.Tool{
 		&searchKnowledgeTool{m: m, outcome: outcome},
 		&resolveTool{m: m, conv: conv, outcome: outcome},
@@ -538,6 +561,17 @@ func latestInboundContact(msgs []cmodels.Message) *cmodels.Message {
 		}
 	}
 	return nil
+}
+
+// lastCustomerMessageIndex returns the position of the newest user-role
+// message in the assembled history (the message this run answers), or -1.
+func lastCustomerMessageIndex(history []aimodels.ChatMessage) int {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == aimodels.RoleUser && strings.TrimSpace(history[i].Content) != "" {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m *Manager) buildHistory(msgs []cmodels.Message, contactID int) []aimodels.ChatMessage {
