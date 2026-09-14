@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -31,6 +32,20 @@ type OAuthCredentialsRequest struct {
 	TenantID     string `json:"tenant_id,omitempty"` // Optional for Microsoft
 	FlowType     string `json:"flow_type,omitempty"` // "new_inbox" or "reconnect"
 	InboxID      int    `json:"inbox_id,omitempty"`  // Required for reconnect flow
+	// ilmu patch 0007: browser URL to land on when the flow finishes — the
+	// tenant portal (dutaILMU), not this admin UI. Absolute http(s) URL or a
+	// site-absolute path; ignored when malformed.
+	ReturnURL string `json:"return_url,omitempty"`
+}
+
+// isValidReturnURL accepts absolute http(s) URLs or site-absolute paths,
+// capped at 512 chars. The callback redirects the consenting user's browser
+// there, so nothing looser (scheme-relative, other protocols) is allowed.
+func isValidReturnURL(u string) bool {
+	if u == "" || len(u) > 512 {
+		return false
+	}
+	return strings.HasPrefix(u, "/") || strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://")
 }
 
 // handleOAuthAuthorize initiates the OAuth authorization flow for creating a new email inbox.
@@ -87,6 +102,11 @@ func handleOAuthAuthorize(r *fastglue.Request) error {
 		oauthData["tenant_id"] = req.TenantID
 	}
 
+	// ilmu patch 0007: remember where the browser should land on completion.
+	if isValidReturnURL(req.ReturnURL) {
+		oauthData["return_url"] = req.ReturnURL
+	}
+
 	if err := app.redis.HSet(ctx, redisKey, oauthData).Err(); err != nil {
 		app.lo.Error("Failed to store OAuth state in Redis", "error", err)
 		return r.SendErrorEnvelope(fasthttp.StatusInternalServerError, app.i18n.Ts("globals.messages.somethingWentWrong"), nil, envelope.GeneralError)
@@ -123,11 +143,44 @@ func handleOAuthCallback(r *fastglue.Request) error {
 		state    = string(r.RequestCtx.QueryArgs().Peek("state"))
 	)
 
+	// ilmu patch 0007: terminal outcomes land on return_url (the tenant
+	// portal) with a machine-readable status — and the connected address on
+	// success — instead of this admin UI. Resolved from the pending Redis
+	// state here (the "denied" outcome arrives before the state is consumed
+	// below); nil return ⇒ the stock admin redirects run unchanged.
+	returnURL := ""
+	if state != "" {
+		if v, err := app.redis.HGet(ctx, "inbox_oauth:"+state, "return_url").Result(); err == nil {
+			returnURL = v
+		}
+	}
+	finish := func(status, email string) bool {
+		if returnURL == "" {
+			return false
+		}
+		q := url.Values{}
+		q.Set("oauth_status", status)
+		if email != "" {
+			q.Set("oauth_email", email)
+		}
+		sep := "?"
+		if strings.Contains(returnURL, "?") {
+			sep = "&"
+		}
+		// Redirect returns nil on success — signal with the bool so callers
+		// don't fall through to the stock admin redirect below.
+		_ = r.Redirect(returnURL+sep+q.Encode(), fasthttp.StatusFound, nil, "")
+		return true
+	}
+
 	// Check if user denied authorization
 	if code == "" {
 		errorMsg := string(r.RequestCtx.QueryArgs().Peek("error"))
 		errorDesc := string(r.RequestCtx.QueryArgs().Peek("error_description"))
 		app.lo.Error("OAuth authorization failed", "error", errorMsg, "description", errorDesc)
+		if finish("denied", "") {
+			return nil
+		}
 		return r.Redirect("/admin/inboxes?error=oauth_denied", fasthttp.StatusFound, nil, "")
 	}
 
@@ -155,6 +208,9 @@ func handleOAuthCallback(r *fastglue.Request) error {
 	tenantID := oauthData["tenant_id"]  // Empty string if not set
 	flowType := oauthData["flow_type"]  // "new_inbox" or "reconnect"
 	inboxIDStr := oauthData["inbox_id"] // Inbox ID for reconnect flow
+	if v := oauthData["return_url"]; v != "" {
+		returnURL = v
+	}
 
 	// Validate provider matches URL parameter
 	if storedProvider != provider {
@@ -174,6 +230,9 @@ func handleOAuthCallback(r *fastglue.Request) error {
 	)
 	if err != nil {
 		app.lo.Error("Failed to exchange code for tokens", "error", err)
+		if finish("token_exchange_failed", "") {
+			return nil
+		}
 		return r.Redirect("/admin/inboxes?error=token_exchange_failed", fasthttp.StatusFound, nil, "")
 	}
 
@@ -181,11 +240,17 @@ func handleOAuthCallback(r *fastglue.Request) error {
 	userEmail, err := getUserEmailFromProvider(provider, token)
 	if err != nil {
 		app.lo.Error("Failed to get user email from provider", "error", err)
+		if finish("email_fetch_failed", "") {
+			return nil
+		}
 		return r.Redirect("/admin/inboxes?error=email_fetch_failed", fasthttp.StatusFound, nil, "")
 	}
 
 	if userEmail == "" {
 		app.lo.Error("User email not found from provider")
+		if finish("email_fetch_failed", "") {
+			return nil
+		}
 		return r.Redirect("/admin/inboxes?error=email_fetch_failed", fasthttp.StatusFound, nil, "")
 	}
 
@@ -220,6 +285,9 @@ func handleOAuthCallback(r *fastglue.Request) error {
 	// New inbox flow: reject if inbox already exists
 	if flowType == FlowTypeNewInbox && existingInbox != nil {
 		app.lo.Error("Inbox already exists for email", "email", userEmail)
+		if finish("inbox_already_exists", userEmail) {
+			return nil
+		}
 		return r.Redirect("/admin/inboxes?error=inbox_already_exists", fasthttp.StatusFound, nil, "")
 	}
 
@@ -234,17 +302,23 @@ func handleOAuthCallback(r *fastglue.Request) error {
 			}
 		}
 
-		if targetInbox == nil {
-			app.lo.Error("Target inbox not found for reconnect", "inbox_id", inboxIDStr)
-			return r.Redirect("/admin/inboxes?error=inbox_not_found", fasthttp.StatusFound, nil, "")
-		}
+			if targetInbox == nil {
+				app.lo.Error("Target inbox not found for reconnect", "inbox_id", inboxIDStr)
+				if finish("inbox_not_found", "") {
+					return nil
+				}
+				return r.Redirect("/admin/inboxes?error=inbox_not_found", fasthttp.StatusFound, nil, "")
+			}
 
-		// Verify the authorized email matches the target inbox's email
-		targetEmailAddr, _ := stringutil.ExtractEmail(targetInbox.From)
-		if targetEmailAddr != userEmailAddr {
-			app.lo.Error("Email mismatch during reconnect", "target_email", targetEmailAddr, "authorized_email", userEmailAddr)
-			return r.Redirect("/admin/inboxes?error=email_mismatch", fasthttp.StatusFound, nil, "")
-		}
+			// Verify the authorized email matches the target inbox's email
+			targetEmailAddr, _ := stringutil.ExtractEmail(targetInbox.From)
+			if targetEmailAddr != userEmailAddr {
+				app.lo.Error("Email mismatch during reconnect", "target_email", targetEmailAddr, "authorized_email", userEmailAddr)
+				if finish("email_mismatch", "") {
+					return nil
+				}
+				return r.Redirect("/admin/inboxes?error=email_mismatch", fasthttp.StatusFound, nil, "")
+			}
 
 		existingInbox = targetInbox
 	}
@@ -257,6 +331,9 @@ func handleOAuthCallback(r *fastglue.Request) error {
 		var existingConfig imodels.Config
 		if err := json.Unmarshal(existingInbox.Config, &existingConfig); err != nil {
 			app.lo.Error("Failed to unmarshal existing config", "error", err)
+			if finish("config_parse_failed", "") {
+				return nil
+			}
 			return r.Redirect("/admin/inboxes?error=config_parse_failed", fasthttp.StatusFound, nil, "")
 		}
 
@@ -277,12 +354,18 @@ func handleOAuthCallback(r *fastglue.Request) error {
 		configJSON, err := json.Marshal(existingConfig)
 		if err != nil {
 			app.lo.Error("Failed to marshal updated config", "error", err)
+			if finish("config_update_failed", "") {
+				return nil
+			}
 			return r.Redirect("/admin/inboxes?error=config_update_failed", fasthttp.StatusFound, nil, "")
 		}
 
 		// Update inbox config directly (bypasses preservation logic that could corrupt OAuth tokens)
 		if err := app.inbox.UpdateConfig(existingInbox.ID, json.RawMessage(configJSON)); err != nil {
-			app.lo.Error("Failed to update inbox config", "error", err)
+			app.lo.Error("Failed to update inbox config", "inbox_id", existingInbox.ID, "error", err)
+			if finish("inbox_update_failed", "") {
+				return nil
+			}
 			return r.Redirect("/admin/inboxes?error=inbox_update_failed", fasthttp.StatusFound, nil, "")
 		}
 
@@ -291,6 +374,9 @@ func handleOAuthCallback(r *fastglue.Request) error {
 			app.lo.Error("error reloading inbox", "id", existingInbox.ID, "error", err)
 		}
 
+		if finish("connected", userEmail) {
+			return nil
+		}
 		return r.Redirect("/admin/inboxes?success=oauth_reconnected", fasthttp.StatusFound, nil, "")
 	}
 
@@ -321,6 +407,9 @@ func handleOAuthCallback(r *fastglue.Request) error {
 	configJSON, err := json.Marshal(config)
 	if err != nil {
 		app.lo.Error("Failed to marshal inbox config", "error", err)
+		if finish("config_creation_failed", "") {
+			return nil
+		}
 		return r.Redirect("/admin/inboxes?error=config_creation_failed", fasthttp.StatusFound, nil, "")
 	}
 
@@ -338,6 +427,9 @@ func handleOAuthCallback(r *fastglue.Request) error {
 	createdInbox, err := app.inbox.Create(newInbox)
 	if err != nil {
 		app.lo.Error("Failed to create inbox", "error", err)
+		if finish("inbox_creation_failed", "") {
+			return nil
+		}
 		return r.Redirect("/admin/inboxes?error=inbox_creation_failed", fasthttp.StatusFound, nil, "")
 	}
 
@@ -346,6 +438,9 @@ func handleOAuthCallback(r *fastglue.Request) error {
 		app.lo.Error("error reloading inbox", "id", createdInbox.ID, "error", err)
 	}
 
+	if finish("connected", userEmail) {
+		return nil
+	}
 	return r.Redirect("/admin/inboxes?success=oauth_connected", fasthttp.StatusFound, nil, "")
 }
 

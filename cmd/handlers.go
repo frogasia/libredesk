@@ -184,7 +184,11 @@ func initHandlers(g *fastglue.Fastglue, hub *ws.Hub) {
 
 	// OAuth endpoints for email inboxes.
 	g.POST("/api/v1/inboxes/oauth/{provider}/authorize", perm(handleOAuthAuthorize, "inboxes:manage"))
-	g.GET("/api/v1/inboxes/oauth/{provider}/callback", perm(handleOAuthCallback, "inboxes:manage"))
+	// ilmu patch 0007: the consent callback completes in the TENANT's browser,
+	// which holds no Libredesk session — gate it on the one-time random state
+	// in Redis instead (standard OAuth2 CSRF protection). authorize stays
+	// session-gated and is only driven by the control-plane.
+	g.GET("/api/v1/inboxes/oauth/{provider}/callback", handleOAuthCallback)
 
 	// Roles.
 	g.GET("/api/v1/roles", auth(handleGetRoles))
